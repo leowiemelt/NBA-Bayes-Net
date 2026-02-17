@@ -1,2 +1,3 @@
-# cse150a-project
-Group project for cse 150a
+# First Project
+[View Notebook on GitHub](https://github.com/leowiemelt/cse150a-project/blob/main/nbamodel.ipynb)
+
