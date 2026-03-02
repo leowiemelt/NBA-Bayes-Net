@@ -1,5 +1,6 @@
 ### AI works cited
 generated variable figure in 0.2 by providing model intuition and variable dependencies
+created helper functions for deriving variables
 ### 0.1 PEAS / Agent Analysis
 The goal is to predict NBA game outcomes over time by using a hidden team 
 condition that influences observable variables. Equivalently, we want to learn 
@@ -52,3 +53,69 @@ To capture this dependency, the model uses an HMM. The hidden state represents a
 
 ## Latent Variable Identification
 The latent variable for this model is the team's momentum at a given point in time. It is not directly recorded anywhere in the dataset, but the data implies the existence of some type of momentum which contributes to the strength, rest differences, and win percentage, which are variables that covary together and with the target outcome. Teams in good form are more likely to handle fatigue, have strong short-term performance, and ultimately win more games by accumulating more momentum than opponents over the course of a season. It is natural to model this as a latent variable since it evolves over time and influences multiple observed variables. This latent variable corresponds directly to the role played by upstream nodes in the Bayes net, particularly the underlying causes behind HomeStrength, AwayStrength, and the rest-related variables. In the BN, these variables were treated as distinct parents of HomeWin, but they stood in for deeper, unmeasured causes of performance, which this HMM exogenizes by introducing a hidden state that causally generates these observed features and the outcome variable.
+
+## Temporal Data Construction
+For this HMM, the data is converted into a sequence through natural temporal ordering. This is done by grouping games by team and sorting them by GAME_DATE_EST, so each sequence represents the order of games played by a team over time. Each time step is simply the next game that team plays, which reflects the real flow of the season. Since the HMM is discrete, continuous and high-cardinality variables are discretized into a small number of bins. Team strength is binned into low, medium, and high using win percentage quantiles, while rest variables are grouped into short, normal, and long rest based on days off between games. Difference variables are binned into negative, neutral, and positive categories. These choices keep the model simple, reduce overfitting, and preserve the main patterns in the data. 
+```python
+ranking = ranking.sort_values("STANDINGSDATE")
+games = games.sort_values("GAME_DATE_EST")
+
+home_strength = pd.merge_asof(
+    games,
+    ranking,
+    left_on="GAME_DATE_EST",
+    right_on="STANDINGSDATE",
+    left_by="HOME_TEAM_ID",
+    right_by="TEAM_ID",
+    direction="backward"
+)
+
+away_strength = pd.merge_asof(
+    games,
+    ranking,
+    left_on="GAME_DATE_EST",
+    right_on="STANDINGSDATE",
+    left_by="VISITOR_TEAM_ID",
+    right_by="TEAM_ID",
+    direction="backward",
+    suffixes=("", "_away")
+)
+
+games = home_strength.merge(
+    away_strength[["GAME_ID", "W_PCT"]],
+    on="GAME_ID",
+    suffixes=("_home", "_away")
+)
+```
+^ ensures each game only sees information available at the time
+
+```python
+# each sequence is a team's games ordered in time
+def build_team_sequences(df):
+    sequences = {}
+
+    for team_id in pd.unique(
+        df[["HOME_TEAM_ID", "VISITOR_TEAM_ID"]].values.ravel()
+    ):
+        team_games = df[
+            (df["HOME_TEAM_ID"] == team_id) |
+            (df["VISITOR_TEAM_ID"] == team_id)
+        ].sort_values("GAME_DATE_EST")
+
+        obs = team_games[
+            [
+                "HomeStrength",
+                "AwayStrength",
+                "HomeRest_bin",
+                "AwayRest_bin",
+                "WinPctDiff_bin",
+                "RestDiff_bin",
+                "HOME_TEAM_WINS"
+            ]
+        ].dropna()
+
+        if len(obs) > 1:
+            sequences[team_id] = obs.values.tolist()
+
+    return sequences
+```
