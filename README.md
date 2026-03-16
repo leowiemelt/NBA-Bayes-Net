@@ -163,9 +163,107 @@ The DAG is shown in the diagram below. HomeStrength and AwayStrength each point 
 
 ## Training and Implementation
 The feature matrix is built by discretizing the continuous inputs, then selecting the relevant column subset, which is split 80/20 with stratification on the HomeWin label. The compute_cpt helper function is applied to the training split to compute each CPT by grouping on parent columns and normalizing counts within each parent configuration. These CPTs are then loaded into a DiscreteBayesianNetwork fitted with MaximumLikelihoodEstimator. Variable elimination is used both for example queries and for generating test-set predictions. For hyperparameters, the test number is 0.20, the random seed is 42, and the MAP decision threshold is 0.50. The rolling window is ten games with a minimum of three to avoid extreme estimates at the very start of a season.
+```python
+from sklearn.model_selection import train_test_split
+from pgmpy.models import DiscreteBayesianNetwork
+from pgmpy.estimators import MaximumLikelihoodEstimator
+from pgmpy.inference import VariableElimination
 
+features = ['HomeWin', 'HomeStrength', 'AwayStrength', 'WinPctDiff_bin', 'HomeRest_bin', 'AwayRest_bin', 'RestDiff_bin', 'HomeRoll_bin', 'AwayRoll_bin']
+
+df = games[features].dropna().copy().reset_index(drop=True)
+df_train, df_test = train_test_split(df,  test_size=0.2, random_state=42, stratify=df['HomeWin'])
+
+print(f'train: {df_train.shape}  test: {df_test.shape}')
+```
+train: (24348237, 9)  test: (6087060, 9)
+```python
+# CPT helper (same pattern as original model)
+def compute_cpt(df, child, parents):
+    if not parents:
+        counts = df[child].value_counts().sort_index().reset_index()
+        counts.columns = [child, 'count']
+        counts['P'] = counts['count'] / counts['count'].sum()
+        return counts[[child, 'P']]
+
+    counts = (
+        df.groupby(parents + [child], observed=False)
+        .size()
+        .reset_index(name='count')
+    )
+    counts['P'] = counts.groupby(parents, observed=False)['count'].transform(
+        lambda x: x / x.sum()
+    )
+    return counts[parents + [child, 'P']]
+```
+```python
+# Parameter Learning with improved CPTs
+cpt_home_strength = compute_cpt(df_train, 'HomeStrength', [])
+cpt_away_strength = compute_cpt(df_train, 'AwayStrength', [])
+cpt_home_rest = compute_cpt(df_train, 'HomeRest_bin', [])
+cpt_away_rest = compute_cpt(df_train, 'AwayRest_bin', [])
+cpt_home_roll = compute_cpt(df_train, 'HomeRoll_bin', [])
+cpt_away_roll = compute_cpt(df_train, 'AwayRoll_bin', [])
+cpt_winpct_diff = compute_cpt(df_train, 'WinPctDiff_bin', ['HomeStrength', 'AwayStrength'])
+cpt_rest_diff = compute_cpt(df_train, 'RestDiff_bin',   ['HomeRest_bin', 'AwayRest_bin'])
+cpt_homewin = compute_cpt(df_train, 'HomeWin', ['WinPctDiff_bin', 'RestDiff_bin', 'HomeRoll_bin', 'AwayRoll_bin'])
+
+print('CPTs')
+cpt_homewin.sort_values(['WinPctDiff_bin', 'RestDiff_bin', 'HomeRoll_bin', 'AwayRoll_bin', 'HomeWin']).head(20)
+```
+```python
+## Inference
+edges = [
+    ('HomeStrength', 'WinPctDiff_bin'),
+    ('AwayStrength', 'WinPctDiff_bin'),
+    ('HomeStrength', 'HomeWin'),
+    ('AwayStrength', 'HomeWin'),
+    ('HomeRest_bin', 'RestDiff_bin'),
+    ('AwayRest_bin', 'RestDiff_bin'),
+    ('WinPctDiff_bin', 'HomeWin'),
+    ('RestDiff_bin',   'HomeWin'),
+    ('HomeRoll_bin', 'HomeWin'),
+    ('AwayRoll_bin', 'HomeWin'),]
+
+model = DiscreteBayesianNetwork(edges)
+model.fit(df_train, estimator=MaximumLikelihoodEstimator)
+
+infer = VariableElimination(model)
+
+q_1 = infer.query(variables=['HomeWin'], evidence={'HomeStrength': 'Strong', 'AwayStrength': 'Weak', 'HomeRoll_bin': 'Hot', 'AwayRoll_bin': 'Cold'})
+print('Query 1: P(HomeWin | Strong home hot streak vs Weak away cold streak)')
+print(q_1, '\n')
+
+q_2 = infer.query(variables=['HomeWin'], evidence={'WinPctDiff_bin': 'HomeStronger', 'RestDiff_bin': 'HomeRestAdv', 'HomeRoll_bin': 'Hot', 'AwayRoll_bin': 'Average'})
+print('Query 2: P(HomeWin | HomeStronger + HomeRestAdv + Hot streak)')
+print(q_2, '\n')
+
+Ev_cols = ['HomeStrength', 'AwayStrength', 'WinPctDiff_bin', 'RestDiff_bin', 'HomeRoll_bin', 'AwayRoll_bin']
+df_test_ = df_test.copy()
+df_test_['Predicted_HomeWin'] = model.predict(df_test[Ev_cols])['HomeWin']
+print(df_test[['HomeWin', 'Predicted_HomeWin']].head(10))
+```
 ## Results and Conclusion
 
+### Interpretation
+
+When the matchup is asymmetric, for example when WinPctDiff_bin is HomeStronger or AwayStronger, the model correctly pushes the posterior far from 0.5 and achieves its highest classification accuracy. The rolling nodes add independent predictive signal in cases where season-long win percentage shows two teams as roughly equal. In other words, a team on a hot streak can now be distinguished from one in a cold stretch, and the model adjusts based on this. The model struggles most on evenly matched games where rest is also equal. In such cases the propability tends to be near the base rate of 58.7% that we identified earlier, offering little additional information. Injuries and roster changes are not captured by any of the features, which could affect prediction. The model also treats regular season and playoff games the same, even though performance can differ in these different environments. Another shortfall is that 2 teams with win percentages like 0.61 and 0.59 are treated the same in the model because both fall in the 'average' bin. The Bayesian network also assumes conditional independence within each parent configuration, which is just an approximation.
+
+### Model Comparison
+
+The baseline model captures team quality and rest differential and assumes that season win percentage is a sufficient statistic for team strength. The improved model adds short term rolling form as an additional  variable alongside the same season-wide data. Both models use identical MLE CPT estimation, the same inference engine, and the same decision thresholds. The key trade-off is that the improved model can represent finer distinctions but also has more cells that may be sparsely populated for rare parent combinations. Both models may produce CPT entries of 0 for uncommon evidence combinations. The new model is the strongest model both empirically and conceptually. First, it achieves higher accuracy, precision, recall, and F1 than the baseline on the test set, as seen in the graph. In theory, rolling form is a commonly used predictor in sports analytics, and teams do observably exhibit momentum over multiple game windows.
+
+### Implications
+
+These results illustrate several core strengths of probabilistic graphical models for sports prediction. Calibrated probabilities are more actionable than point predictions because downstream decisions can be weighted by residual uncertainty rather than treated as certainties. The explicit DAG structure makes it transparent why the model assigns any particular probability — the posterior for a given game is a direct function of the team quality differential, rest advantage, and rolling form, all of which are interpretable to a domain expert. Partial evidence is also handled gracefully: if rest-day data is unavailable for a game, Variable Elimination marginalises it out and returns a valid posterior, whereas a discriminative model with a missing feature would either fail or require imputation. The model's tendency to hedge toward the base rate on even matchups is not a flaw but rather a sign of good calibration — those games are genuinely uncertain and the model correctly reflects that.
+
+### Weaknesses and Potential Extensions
+
+The most significant weakness is the large 3-bin discretizations, which loses granularity and conflates teams that differ meaningfully in quality. A natural fix would be to use quantile-based or data-driven bins that better reflect the distribution of the data. Player features such as injury status, starter availability, or usage-weighted plus/minus would likely improve the model's ability to handle the case where a team's observed strength diverges from its actual strength on a given night. A dynamic Bayesian network or hidden Markov model could represent team strength as a latent state that evolves game-to-game rather than than with the fixed rolling window. Finally, replacing hard bin assignments with soft evidence and passing the raw win percentage as a distribution over strength bins would've reduced information loss at the discretization boundary.
+
+### Conclusion
+
+The strongest model is the improved Bayesian network, which extends the baseline by adding rolling 10-game win percentage nodes for both the home and away team as additional parents of the HomeWin node. It outperforms the baseline on every reported classification metric. The project demonstrates that probabilistic graphical models offer advantage in sports prediction because encode domain knowledge in an interpretable structure, and produce calibrated estimates. The main lessons learned from the improvements are that short-term rolling success carries predictive power that season-level aggregates don't fully capture.
 ## Citations
 ● Libraries: pgmpy is the modeling library used. It provides the DiscreteBayesianNetwork class for making the DAG, MaximumLikelihoodEstimator for fitting CPTs from frequency counts, and VariableElimination for inference. sklearn is used for train_test_split and the standard classification metrics (accuracy, precision, recall, F1). pandas and numpy handle all data wrangling, temporal merges, and rolling window computations. networkx and matplotlib are used to draw the DAG.
 ● ChatGPT: implementing rolling 10-game win function, conditional chi-squared test logic
