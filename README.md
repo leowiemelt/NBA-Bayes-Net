@@ -291,6 +291,7 @@ ax.legend()
 plt.tight_layout()
 plt.show()
 ```
+![comparison](comparison.png)
 ### Interpretation
 
 When the matchup is asymmetric, for example when WinPctDiff_bin is HomeStronger or AwayStronger, the model correctly pushes the posterior far from 0.5 and achieves its highest classification accuracy. The rolling nodes add independent predictive signal in cases where season-long win percentage shows two teams as roughly equal. In other words, a team on a hot streak can now be distinguished from one in a cold stretch, and the model adjusts based on this. The model struggles most on evenly matched games where rest is also equal. In such cases the propability tends to be near the base rate of 58.7% that we identified earlier, offering little additional information. Injuries and roster changes are not captured by any of the features, which could affect prediction. The model also treats regular season and playoff games the same, even though performance can differ in these different environments. Another shortfall is that 2 teams with win percentages like 0.61 and 0.59 are treated the same in the model because both fall in the 'average' bin. The Bayesian network also assumes conditional independence within each parent configuration, which is just an approximation.
