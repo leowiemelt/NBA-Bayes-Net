@@ -59,7 +59,94 @@ for _, row in games.iterrows():
 games['HomeRestDays'] = home_rest
 games['AwayRestDays'] = away_rest
 ```
+```python
+# Rolling 10-game win % function
+ROLL_WINDOW = 10
 
+home_log = games[['GAME_DATE_EST', 'GAME_ID', 'HOME_TEAM_ID', 'HOME_TEAM_WINS']].copy()
+home_log.rename(columns={'HOME_TEAM_ID': 'team_id', 'HOME_TEAM_WINS': 'win'}, inplace=True)
+
+away_log = games[['GAME_DATE_EST', 'GAME_ID', 'VISITOR_TEAM_ID', 'HOME_TEAM_WINS']].copy()
+away_log['win'] = 1 - away_log['HOME_TEAM_WINS']
+away_log.rename(columns={'VISITOR_TEAM_ID': 'team_id'}, inplace=True)
+away_log = away_log[['GAME_DATE_EST', 'GAME_ID', 'team_id', 'win']]
+
+team_log = (
+    pd.concat(
+        [home_log[['GAME_DATE_EST', 'GAME_ID', 'team_id', 'win']], away_log],
+        ignore_index=True
+    )
+    .sort_values(['team_id', 'GAME_DATE_EST', 'GAME_ID'])
+    .reset_index(drop=True)
+)
+
+team_log['roll_wpct'] = (
+    team_log
+    .groupby('team_id', group_keys=False)['win']
+    .apply(lambda x: x.shift(1).rolling(ROLL_WINDOW, min_periods=3).mean())
+)
+
+home_roll = (
+    team_log
+    .merge(games[['GAME_ID', 'HOME_TEAM_ID']], on='GAME_ID', how='inner')
+    .query('team_id == HOME_TEAM_ID')
+    [['GAME_ID', 'roll_wpct']]
+    .rename(columns={'roll_wpct': 'HomeRoll10'})
+)
+
+away_roll = (
+    team_log
+    .merge(games[['GAME_ID', 'VISITOR_TEAM_ID']], on='GAME_ID', how='inner')
+    .query('team_id == VISITOR_TEAM_ID')
+    [['GAME_ID', 'roll_wpct']]
+    .rename(columns={'roll_wpct': 'AwayRoll10'})
+)
+
+games = games.merge(home_roll, on='GAME_ID', how='left')
+games = games.merge(away_roll, on='GAME_ID', how='left')
+
+n_nan_home = games['HomeRoll10'].isna().sum()
+n_nan_away = games['AwayRoll10'].isna().sum()
+print(f'HomeRoll10 NaNs (early-season games, will bin to Average): {n_nan_home}/{len(games)}')
+print(f'AwayRoll10 NaNs: {n_nan_away}/{len(games)}')
+print()
+print(games[['GAME_DATE_EST','HOME_TEAM_ID','VISITOR_TEAM_ID','HomeRoll10','AwayRoll10']].head(5))
+```
+```python
+# Discretization
+def bin_strength(p):
+    if pd.isna(p): return np.nan
+    if p <= 0.40:  return 'Weak'
+    if p <= 0.60:  return 'Average'
+    return 'Strong'
+
+def bin_rest(days):
+    if days == 0:  return 'BackToBack'
+    if days <= 2:  return 'NormalRest'
+    return 'WellRested'
+
+def bin_roll(p):
+    if pd.isna(p): return 'Average'
+    if p <= 0.35:  return 'Cold'
+    if p <= 0.65:  return 'Average'
+    return 'Hot'
+
+games['HomeStrength'] = games['HomeWinPct'].apply(bin_strength)
+games['AwayStrength'] = games['AwayWinPct'].apply(bin_strength)
+games['HomeRest_bin'] = games['HomeRestDays'].apply(bin_rest)
+games['AwayRest_bin'] = games['AwayRestDays'].apply(bin_rest)
+games['HomeRoll_bin'] = games['HomeRoll10'].apply(bin_roll)
+games['AwayRoll_bin'] = games['AwayRoll10'].apply(bin_roll)
+
+games['WinPctDiff'] = games['HomeWinPct'] - games['AwayWinPct']
+games['WinPctDiff_bin'] = pd.cut(games['WinPctDiff'], bins=[-np.inf, -0.10, 0.10, np.inf], labels=['AwayStronger', 'Even', 'HomeStronger'])
+games['RestDiff'] = games['HomeRestDays'] - games['AwayRestDays']
+games['RestDiff_bin'] = pd.cut(games['RestDiff'], bins=[-np.inf, -1, 0, np.inf], labels=['AwayRestAdv', 'EvenRest', 'HomeRestAdv'])
+games['HomeWin'] = games['HOME_TEAM_WINS'].astype(int)
+
+print('Discretization complete.')
+print(games[['HomeStrength','AwayStrength','WinPctDiff_bin', 'HomeRest_bin','AwayRest_bin','RestDiff_bin','HomeRoll_bin','AwayRoll_bin','HomeWin']].head(3))
+```
 ## Model Choice & Methodology
 
 ## Training and Implementation
