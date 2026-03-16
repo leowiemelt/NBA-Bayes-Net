@@ -144,7 +144,6 @@ games['RestDiff'] = games['HomeRestDays'] - games['AwayRestDays']
 games['RestDiff_bin'] = pd.cut(games['RestDiff'], bins=[-np.inf, -1, 0, np.inf], labels=['AwayRestAdv', 'EvenRest', 'HomeRestAdv'])
 games['HomeWin'] = games['HOME_TEAM_WINS'].astype(int)
 
-print('Discretization complete.')
 print(games[['HomeStrength','AwayStrength','WinPctDiff_bin', 'HomeRest_bin','AwayRest_bin','RestDiff_bin','HomeRoll_bin','AwayRoll_bin','HomeWin']].head(3))
 ```
 ## Model Choice & Methodology
@@ -243,8 +242,55 @@ df_test_ = df_test.copy()
 df_test_['Predicted_HomeWin'] = model.predict(df_test[Ev_cols])['HomeWin']
 print(df_test[['HomeWin', 'Predicted_HomeWin']].head(10))
 ```
-## Results and Conclusion
+```python
+# Evaluation metrics
+y_true = df_test['HomeWin']
+y_pred = df_test['Predicted_HomeWin']
 
+acc = accuracy_score( y_true, y_pred)
+prec = precision_score(y_true, y_pred, pos_label=1)
+rec = recall_score(y_true, y_pred, pos_label=1)
+f1 = f1_score(y_true, y_pred, pos_label=1)
+
+print('Improved Evaluation Metrics:')
+print(f'Accuracy: {acc:.2%}')
+print(f'Precision: {prec:.2%}')
+print(f'Recall: {rec:.2%}')
+print(f'F1-score: {f1:.2%}')
+```
+Improved Evaluation Metrics:
+
+Accuracy: 93.34%
+
+Precision: 95.97%
+
+Recall: 92.51%
+
+F1-score: 94.21%
+## Results and Conclusion
+```python
+metrics_names = ['Accuracy', 'Precision', 'Recall', 'F1']
+v1_vals = [.722, .732, .83, .778]
+v2_vals = [acc, prec, rec, f1]
+x, w = np.arange(len(metrics_names)), 0.35
+
+fig, ax = plt.subplots(figsize=(9, 5))
+b1 = ax.bar(x - w/2, v1_vals, w, label='v1 Baseline (MLE)', color='#9e9e9e')
+b2 = ax.bar(x + w/2, v2_vals, w, label='v2 Improved (MLE + Roll10)', color='#1976d2')
+for bar in list(b1) + list(b2):
+    ax.text(bar.get_x() + bar.get_width()/2,
+            bar.get_height() + 0.005,
+            f'{bar.get_height():.3f}', ha='center', va='bottom', fontsize=8)
+ax.axhline(0.587, color='red', ls='--', lw=1, label='Home-win base rate (58.7%)')
+ax.set_xticks(x)
+ax.set_xticklabels(metrics_names)
+ax.set_ylim(0, 1.0)
+ax.set_ylabel('Score')
+ax.set_title('Classification Metrics: Baseline vs Improved')
+ax.legend()
+plt.tight_layout()
+plt.show()
+```
 ### Interpretation
 
 When the matchup is asymmetric, for example when WinPctDiff_bin is HomeStronger or AwayStronger, the model correctly pushes the posterior far from 0.5 and achieves its highest classification accuracy. The rolling nodes add independent predictive signal in cases where season-long win percentage shows two teams as roughly equal. In other words, a team on a hot streak can now be distinguished from one in a cold stretch, and the model adjusts based on this. The model struggles most on evenly matched games where rest is also equal. In such cases the propability tends to be near the base rate of 58.7% that we identified earlier, offering little additional information. Injuries and roster changes are not captured by any of the features, which could affect prediction. The model also treats regular season and playoff games the same, even though performance can differ in these different environments. Another shortfall is that 2 teams with win percentages like 0.61 and 0.59 are treated the same in the model because both fall in the 'average' bin. The Bayesian network also assumes conditional independence within each parent configuration, which is just an approximation.
