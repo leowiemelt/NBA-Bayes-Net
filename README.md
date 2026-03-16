@@ -313,5 +313,6 @@ The most significant weakness is the large 3-bin discretizations, which loses gr
 The strongest model is the improved Bayesian network, which extends the baseline by adding rolling 10-game win percentage nodes for both the home and away team as additional parents of the HomeWin node. It outperforms the baseline on every reported classification metric. The project demonstrates that probabilistic graphical models offer advantage in sports prediction because encode domain knowledge in an interpretable structure, and produce calibrated estimates. The main lessons learned from the improvements are that short-term rolling success carries predictive power that season-level aggregates don't fully capture.
 ## Citations
 ● Libraries: pgmpy is the modeling library used. It provides the DiscreteBayesianNetwork class for making the DAG, MaximumLikelihoodEstimator for fitting CPTs from frequency counts, and VariableElimination for inference. sklearn is used for train_test_split and the standard classification metrics (accuracy, precision, recall, F1). pandas and numpy handle all data wrangling, temporal merges, and rolling window computations. networkx and matplotlib are used to draw the DAG.
-● ChatGPT: implementing rolling 10-game win function, conditional chi-squared test logic
+
+● ChatGPT: implementing rolling 10-game win function, how to create sublpots with pyplot.
 
