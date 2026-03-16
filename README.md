@@ -167,7 +167,6 @@ The DAG is shown in the diagram below. HomeStrength and AwayStrength each point 
 ## Results and Conclusion
 
 ## Citations
-● pgmy
-● External resources:
+● Libraries: pgmpy is the modeling library used. It provides the DiscreteBayesianNetwork class for making the DAG, MaximumLikelihoodEstimator for fitting CPTs from frequency counts, and VariableElimination for inference. sklearn is used for train_test_split and the standard classification metrics (accuracy, precision, recall, F1). pandas and numpy handle all data wrangling, temporal merges, and rolling window computations. networkx and matplotlib are used to draw the DAG.
 ● ChatGPT: implementing rolling 10-game win function, conditional chi-squared test logic
 
